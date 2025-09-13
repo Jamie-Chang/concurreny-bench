@@ -1,8 +1,19 @@
 import asyncio
+from contextlib import contextmanager
 from typing import Iterator
 import random
 import tracemalloc
 from itertools import islice
+import time
+
+
+@contextmanager
+def timer(message: str) -> Iterator[None]:
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        print(message, time.perf_counter() - start, "s")
 
 
 def urls() -> Iterator[str]:
@@ -10,19 +21,21 @@ def urls() -> Iterator[str]:
         yield "https://example.com"
 
 
-async def process_url(url: str) -> None:
-    await asyncio.sleep(random.uniform(0.1, 0.2))
+async def process_url(url: str, semaphore: asyncio.Semaphore) -> None:
+    try:
+        await asyncio.sleep(random.uniform(0.1, 0.2))
+    finally:
+        semaphore.release()
 
 
 async def main() -> None:
     tracemalloc.start()
-    semaphore = asyncio.Semaphore(500)
-    async with asyncio.TaskGroup() as tg:
-        for url in islice(urls(), 100_000):
-            await semaphore.acquire()
-            tg.create_task(process_url(url)).add_done_callback(
-                lambda _: semaphore.release()
-            )
+    with timer("Semaphore without callback"):
+        semaphore = asyncio.Semaphore(500)
+        async with asyncio.TaskGroup() as tg:
+            for url in islice(urls(), 100_000):
+                await semaphore.acquire()
+                tg.create_task(process_url(url, semaphore))
 
     _, peak_memory = tracemalloc.get_traced_memory()
     print(f"Peak memory usage: {peak_memory:_} bytes")
